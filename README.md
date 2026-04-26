@@ -58,10 +58,15 @@ src/
   cli.ts        command dispatcher + UI
   ui.ts         ANSI color helpers, prompt
   lib.ts        playwright launcher, stealth, log, jitter
-  db.ts         single listings table (SQLite)
+  db.ts         listings + messages tables (SQLite)
   llm.ts        Anthropic client, prompts, vision
   search.ts     FB Marketplace scraper
   score.ts      parallel scoring loop
   outreach.ts   opening-message sender
   session.ts    Chrome cookie extractor + Keychain decrypt
+  queries.ts    LLM-generated search query expansion
+  enrich.ts     brand identification + favicon fetching
+  monitor.ts    inbox polling + auto-reply negotiation
+  report.ts     HTML dashboard generator
+  server.ts     Bun HTTP server + deploy agent API
 ```

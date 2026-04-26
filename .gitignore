@@ -7,3 +7,4 @@ state.db-*
 .fb-cookies.json
 .last-top.json
 .product-images.json
+.DS_Store

@@ -1,5 +1,5 @@
 import { withBrowser, log } from './lib';
-import { getListing, recordMessage } from './db';
+import { getListing, recordMessage, addMessage } from './db';
 import { draftOutreach } from './llm';
 import { execSync } from 'node:child_process';
 import type { Page } from 'playwright';
@@ -28,6 +28,7 @@ export async function reachOut(listingId: string, opts: { dryRun?: boolean; mess
   }, { headless: false, windowSize: { width: 756, height: 450 } });
 
   recordMessage(listingId, message!);
+  addMessage(listingId, 'buyer', message!);
   log(`✓ sent to ${l.title.slice(0, 40)}`);
   return draft;
 }

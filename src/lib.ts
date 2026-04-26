@@ -49,7 +49,7 @@ export async function withRealChrome<T>(
     locale: 'en-US',
     timezoneId: 'America/Los_Angeles',
     channel: 'chrome',
-    args: ['--disable-blink-features=AutomationControlled', `--window-size=${vp.width},${vp.height}`, '--window-position=700,300'],
+    args: ['--disable-blink-features=AutomationControlled', '--window-size=1512,900', '--window-position=700,300'],
   });
   try {
     const { applyToContext } = await import('./session');

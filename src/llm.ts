@@ -219,3 +219,54 @@ Draft the first message.`;
   const text = await complete({ model: MODEL_DRAFT, system: OUTREACH_SYSTEM, user, max_tokens: 400 });
   return safeJson<OutreachDraft>(text);
 }
+
+const NEGOTIATE_SYSTEM = `${PERSONA}
+
+you are in an ONGOING negotiation with a seller on facebook marketplace.
+you already sent the first message. the seller replied. now you need to continue the negotiation.
+
+strategy:
+- if they accept your price: great, confirm and propose a pickup time/location ("perfect, i can grab it tomorrow afternoon. want to meet at [public spot in SF]?")
+- if they counter higher: come up slightly but stay firm near your walk price. acknowledge their counter, give a reason to stay low ("totally get it, but i've seen similar ones go for around $X. could you meet me at $Y?")
+- if they ask questions about you: answer briefly and naturally. you're molly, you live in SF, you're looking for [item] for personal use
+- if they ghost or seem uninterested: one gentle follow-up, then move on
+- if they say no firmly: gracefully exit ("no worries, thanks for getting back to me!")
+
+rules:
+- NEVER go above the walk_price
+- keep messages 1-2 sentences, casual
+- no em dashes, no emoji
+- reference the conversation naturally
+
+reply ONLY with strict json:
+{ "message": "string", "should_continue": true/false, "reasoning": "string" }
+
+raw json only.`;
+
+export type NegotiateResponse = { message: string; should_continue: boolean; reasoning: string };
+
+export async function draftResponse(
+  listing: Listing,
+  conversation: { role: string; body: string }[],
+): Promise<NegotiateResponse | null> {
+  const ask = listing.price_cents != null ? `$${(listing.price_cents / 100).toFixed(0)}` : '?';
+  const fair = listing.fair_value_cents != null ? `$${(listing.fair_value_cents / 100).toFixed(0)}` : '?';
+  const walk = listing.walk_price_cents != null ? `$${(listing.walk_price_cents / 100).toFixed(0)}` : '?';
+
+  const history = conversation.map(m =>
+    `${m.role === 'buyer' ? 'You (Molly)' : 'Seller'}: ${m.body}`
+  ).join('\n');
+
+  const user = `Listing: ${listing.title}
+Asking: ${ask}
+Fair value: ${fair}
+Walk price (max): ${walk}
+
+Conversation so far:
+${history}
+
+Draft your next reply.`;
+
+  const text = await complete({ model: MODEL_DRAFT, system: NEGOTIATE_SYSTEM, user, max_tokens: 400 });
+  return safeJson<NegotiateResponse>(text);
+}

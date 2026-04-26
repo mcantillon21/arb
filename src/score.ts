@@ -1,19 +1,18 @@
 import { getUnscored, updateScore } from './db';
 import { scoreListing } from './llm';
 import { log } from './lib';
-import { colorScore, dim, gold, gray, red } from './ui';
+import { gold, dim } from './ui';
 
-export async function scoreUnscored(opts: { limit?: number; concurrency?: number } = {}) {
+export async function scoreUnscored(opts: { limit?: number; concurrency?: number; quiet?: boolean } = {}) {
   const limit = opts.limit ?? 30;
   const concurrency = opts.concurrency ?? 3;
+  const quiet = opts.quiet ?? false;
   const pending = getUnscored(limit);
-  if (!pending.length) {
-    log(gray('nothing to score'));
-    return;
-  }
-  log(`scoring ${pending.length} listings ${dim(`(concurrency=${concurrency})`)}`);
+  if (!pending.length) return;
+  if (!quiet) log(`scoring ${pending.length} listings`);
 
   let done = 0;
+  let gems = 0;
   const queue = [...pending];
   const workers: Promise<void>[] = [];
   for (let i = 0; i < concurrency; i++) {
@@ -22,12 +21,10 @@ export async function scoreUnscored(opts: { limit?: number; concurrency?: number
         while (queue.length) {
           const l = queue.shift()!;
           done++;
-          const prog = dim(`[${done}/${pending.length}]`);
           try {
             const s = await scoreListing(l);
             if (!s) {
               updateScore(l.id, { score: 0, rationale: 'parse-fail' });
-              log(`${prog} ${red('×')} ${l.id} parse fail`);
               continue;
             }
             updateScore(l.id, {
@@ -41,16 +38,19 @@ export async function scoreUnscored(opts: { limit?: number; concurrency?: number
               brand_url: s.brand_url || null,
               category: s.category || null,
             });
-            const ask = l.price_cents != null ? `$${(l.price_cents / 100).toFixed(0)}` : '?';
-            const fv = s.fair_value_cents != null ? `$${(s.fair_value_cents / 100).toFixed(0)}` : '?';
-            const star = s.score >= 7 ? gold('★') : gray('·');
-            log(`${prog} ${star} ${colorScore(s.score)} ${ask}${dim('→')}${fv} ${dim(s.brand + ' ·')} ${s.product_name || l.title.slice(0, 50)}`);
-          } catch (e: any) {
-            log(`${prog} ${red('×')} ${l.id} ${e.message}`);
-          }
+            if (s.score >= 7) {
+              gems++;
+              if (!quiet) {
+                const ask = l.price_cents != null ? `$${(l.price_cents / 100).toFixed(0)}` : '?';
+                const fv = s.fair_value_cents != null ? `$${(s.fair_value_cents / 100).toFixed(0)}` : '?';
+                log(`${gold('★')} ${ask}${dim('→')}${fv} ${dim(s.brand + ' ·')} ${s.product_name || l.title.slice(0, 50)}`);
+              }
+            }
+          } catch {}
         }
       })()
     );
   }
   await Promise.all(workers);
+  if (!quiet) log(`scored ${done}, ${gold(String(gems))} gems`);
 }

@@ -19,7 +19,7 @@ function card(l: Listing, n: number): string {
   const off = pctOff(l.price_cents, l.fair_value_cents);
   const brand = extractBrand(l.product_name || 'Other');
   return `
-    <div class="card" data-brand="${esc(brand)}" data-product="${esc(l.product_name || '')}" data-id="${esc(l.id)}" style="animation-delay:${n * 50}ms">
+    <div class="card" data-brand="${esc(brand)}" data-model="${esc(extractModel(brand, l.product_name || ''))}" data-product="${esc(l.product_name || '')}" data-id="${esc(l.id)}" style="animation-delay:${n * 50}ms">
       <div class="photo-wrap" data-listing-id="${esc(l.id)}" data-url="${esc(l.url)}">
         ${l.photo_url ? `<img src="${l.photo_url}" loading="lazy" onerror="this.style.display='none'"/>` : '<div class="no-photo">no photo</div>'}
         <div class="agent-overlay deploy-cta"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><span>Deploy Agent</span></div>
@@ -51,13 +51,31 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function extractModel(brand: string, productName: string): string {
+  let model = productName.replace(new RegExp('^' + brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*', 'i'), '');
+  // take first word as model (Aeron, Eames, Mirra, Embody, etc.)
+  const first = model.split(/\s+/)[0];
+  return first || model;
+}
+
 function pillHtml(info: BrandInfo): string {
   const img = info.image_b64
     ? `<img class="pill-img" src="data:image/png;base64,${info.image_b64}" alt=""/>`
     : `<span class="pill-dot"></span>`;
-  const uniqueProducts = [...new Set(info.products)].filter(p => p !== info.brand && p !== 'Other');
-  const dropdown = uniqueProducts.length > 0
-    ? `<div class="pill-dropdown"><div class="pill-dropdown-inner">${uniqueProducts.map(p => `<button class="pill-sub" data-product="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>`
+  // group products by model name instead of listing every variant
+  const modelCounts = new Map<string, { model: string; count: number; products: string[] }>();
+  for (const p of info.products) {
+    if (p === info.brand || p === 'Other') continue;
+    const model = extractModel(info.brand, p);
+    const existing = modelCounts.get(model);
+    if (existing) { existing.count++; existing.products.push(p); }
+    else modelCounts.set(model, { model, count: 1, products: [p] });
+  }
+  const models = [...modelCounts.values()].sort((a, b) => b.count - a.count);
+  const dropdown = models.length > 0
+    ? `<div class="pill-dropdown"><div class="pill-dropdown-inner">${models.map(m =>
+        `<button class="pill-sub" data-model="${esc(m.model)}" data-brand="${esc(info.brand)}">${esc(m.model)}<span class="pill-count">${m.count}</span></button>`
+      ).join('')}</div></div>`
     : '';
   return `<div class="pill-wrap"><button class="pill" data-filter="${esc(info.brand)}">${img}<span class="pill-label">${esc(info.brand)}</span><span class="pill-count">${info.count}</span></button>${dropdown}</div>`;
 }
@@ -202,13 +220,13 @@ function applyFilters(){
   document.querySelectorAll('.card').forEach(c=>{
     let show=true;
     if(filterMode==='brand')show=c.dataset.brand===filterValue;
-    else if(filterMode==='product')show=c.dataset.product===filterValue;
+    else if(filterMode==='model')show=c.dataset.model===filterValue;
     c.hidden=!show;
   });
 }
 pills.addEventListener('click',e=>{
   const sub=e.target.closest('.pill-sub');
-  if(sub){e.stopPropagation();clearActive();sub.classList.add('active');sub.closest('.pill-wrap')?.querySelector('.pill')?.classList.add('active');filterMode='product';filterValue=sub.dataset.product;applyFilters();return}
+  if(sub){e.stopPropagation();clearActive();sub.classList.add('active');sub.closest('.pill-wrap')?.querySelector('.pill')?.classList.add('active');filterMode='model';filterValue=sub.dataset.model;applyFilters();return}
   const btn=e.target.closest('.pill');if(!btn)return;clearActive();btn.classList.add('active');
   const f=btn.dataset.filter;filterMode=f==='all'?'all':'brand';filterValue=f;applyFilters();
 });

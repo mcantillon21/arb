@@ -5,8 +5,6 @@ import { scoreUnscored } from './score';
 import { reachOut } from './outreach';
 import { topCandidates, db, getListing, type Listing } from './db';
 import { syncFromChrome, summarize, findActiveChromeProfile } from './session';
-import { generateHTML } from './report';
-import { enrichProducts } from './enrich';
 import { startServer, stopServer } from './server';
 import { execSync } from 'node:child_process';
 import {
@@ -20,79 +18,7 @@ import { ROOT } from './lib';
 const fmt$ = (c: number | null) => (c != null ? `$${(c / 100).toFixed(0)}` : '?');
 const LAST_TOP = path.join(ROOT, '.last-top.json');
 
-const PRESETS: Record<string, string[]> = {
-  furniture: [
-    // herman miller — the king of office arb
-    'herman miller aeron', 'herman miller embody', 'herman miller mirra',
-    'herman miller sayl', 'herman miller cosm', 'herman miller celle',
-    'herman miller eames', 'herman miller noguchi',
-    // steelcase + knoll
-    'steelcase leap', 'steelcase gesture', 'steelcase think',
-    'knoll generation', 'knoll chadwick', 'knoll womb chair',
-    'humanscale freedom', 'humanscale liberty',
-    // mid-century (high margin, sellers rarely know value)
-    'eames lounge chair', 'eames shell chair', 'eames DSW', 'eames DCW',
-    'saarinen tulip table', 'saarinen womb', 'noguchi coffee table',
-    'barcelona chair', 'wassily chair', 'nelson bench',
-    'danish modern furniture', 'teak credenza', 'mcm sideboard',
-  ],
-  luxury: [
-    // eyewear (huge info asymmetry)
-    'cartier sunglasses', 'cartier glasses', 'cartier buffalo horn',
-    'chrome hearts glasses', 'jacques marie mage',
-    'chanel sunglasses', 'dior sunglasses', 'tom ford sunglasses',
-    'persol sunglasses', 'prada sunglasses',
-    // bags (highest absolute margins)
-    'louis vuitton bag', 'louis vuitton neverfull', 'louis vuitton speedy',
-    'chanel flap bag', 'chanel classic', 'hermes bag', 'hermes birkin',
-    'goyard bag', 'bottega veneta bag', 'celine bag',
-    // clothing (high margin per piece)
-    'moncler jacket', 'canada goose jacket', 'stone island jacket',
-    'acne studios', 'rick owens', 'chrome hearts jewelry',
-  ],
-  watches: [
-    'rolex submariner', 'rolex datejust', 'rolex daytona', 'rolex gmt',
-    'omega seamaster', 'omega speedmaster', 'omega aqua terra',
-    'tudor black bay', 'tudor pelagos',
-    'cartier santos', 'cartier tank',
-    'breitling navitimer', 'breitling superocean',
-    'iwc pilot', 'panerai luminor',
-    'grand seiko', 'seiko presage', 'tag heuer carrera',
-  ],
-  audio: [
-    // high-end audio (margins 40-60%, sellers don't know secondary market)
-    'mcintosh amplifier', 'mcintosh receiver',
-    'bowers wilkins speakers', 'b&w speakers',
-    'kef ls50', 'kef r series',
-    'focal speakers', 'focal utopia',
-    'mark levinson', 'classe audio',
-    'sonos arc', 'sonos era 300',
-    'bang olufsen', 'devialet phantom',
-  ],
-  cameras: [
-    // lenses hold value better than bodies
-    'sony gm lens', 'sony 24-70 gm', 'sony 70-200 gm',
-    'canon l lens', 'canon rf lens',
-    'leica lens', 'leica m', 'leica q',
-    'hasselblad', 'fujifilm gfx',
-    'nikon z lens', 'sigma art lens',
-  ],
-  tools: [
-    // premium tools (snap-on alone is a $1B+ resale market)
-    'snap on tool box', 'snap on wrench', 'snap on ratchet',
-    'festool track saw', 'festool sander', 'festool dust extractor',
-    'lie nielsen plane', 'veritas plane',
-    'hilti drill', 'hilti laser',
-    'milwaukee m18 fuel', 'milwaukee packout',
-  ],
-};
-
-function expandPreset(input: string): string[] {
-  const key = (input || '').toLowerCase().trim();
-  if (!key || key === 'all') return Object.values(PRESETS).flat();
-  if (PRESETS[key]) return PRESETS[key];
-  return [input];
-}
+import { generateQueries } from './queries';
 
 function printCandidate(l: Listing, n?: number) {
   const spreadCents =
@@ -150,15 +76,17 @@ ${bold('  setup')}
     ${cyan('arb whoami')}                       verify session
 
 ${bold('  recon')}
-    ${cyan('arb auto')} ${dim('[preset|query] [--show]')}   hunt + score + list candidates ${dim('(default: all)')}
-    ${cyan('arb score')} ${dim('[--min=N] [--limit=N]')}    score unscored + show candidates
-    ${cyan('arb hunt')} ${dim('<query> [--scrolls=N]')}     scrape only (no scoring)
+    ${cyan('arb auto')} ${dim('[focus] [--n=100] [--show]')}  LLM generates queries, hunts, scores, shows viz
+    ${cyan('arb score')} ${dim('[--min=N] [--limit=N]')}     score unscored + show candidates
+    ${cyan('arb hunt')} ${dim('<query> [--scrolls=N]')}      scrape one query (no scoring)
 
 ${bold('  act')}
-    ${cyan('arb reach')} ${dim('<n|id> [--dry] [--yes]')}   send opening message
-    ${cyan('arb viz')} ${dim('[--min=N]')}                  photo grid report in browser
+    ${cyan('arb reach')} ${dim('<n|id> [--dry] [--yes]')}    send opening message
+    ${cyan('arb viz')} ${dim('[--min=N]')}                   photo grid report in browser
 
-    ${dim('presets: furniture · luxury · watches · audio · cameras · tools · all')}
+    ${dim('examples: arb auto                  (LLM picks best queries)')}
+    ${dim('          arb auto "watches"         (focused on watches)')}
+    ${dim('          arb auto --n=200           (200 queries)')}
 `);
   process.exit(0);
 }
@@ -242,16 +170,13 @@ async function main() {
 
     case 'view':
     case 'viz': {
-      const min = parseInt(flag('min', '6')!, 10);
-      const rows = topCandidates({ minScore: min, limit: 500, includeMessaged: true });
-      if (!rows.length) return console.log(gray(`no candidates >= ${min}. run arb auto first.`));
-      console.log(rule('enrich products', cyan));
-      const products = await enrichProducts(rows);
-      const html = generateHTML(rows, products);
-      const url = startServer(html);
+      try { execSync('lsof -ti:8788 | xargs kill -9 2>/dev/null'); } catch {}
+      await new Promise((r) => setTimeout(r, 500));
+      const url = startServer();
       execSync(`open ${url}`);
-      log(`${bold(String(rows.length))} candidates, ${bold(String(products.size))} brands — ctrl+c to stop`);
+      log(`viz live at ${cyan(url)} — ctrl+c to stop`);
       await new Promise(() => {});
+      break;
     }
 
     case 'reach': {
@@ -275,34 +200,70 @@ async function main() {
     }
 
     case 'auto': {
-      const raw = positional.join(' ') || 'all';
-      const queries = expandPreset(raw);
       const min = parseInt(flag('min', '6')!, 10);
       const scrolls = parseInt(flag('scrolls', '6')!, 10);
       const show = flag('show') === 'true';
 
-      // start live dashboard
-      const initialCandidates = topCandidates({ minScore: min, limit: 200, includeMessaged: true });
-      const brands = await enrichProducts(initialCandidates).catch(() => new Map());
-      const html = generateHTML(initialCandidates, brands);
-      const url = startServer(html);
-      execSync(`open ${url}`);
+      const queries = [
+        // furniture — broad brand searches
+        'herman miller', 'herman miller chair', 'eames chair', 'eames lounge',
+        'steelcase chair', 'knoll furniture', 'knoll chair',
+        'danish modern', 'mid century modern furniture', 'teak credenza',
+        // watches — brand level
+        'audemars piguet', 'patek philippe', 'vacheron constantin',
+        'rolex', 'rolex watch', 'omega watch', 'tudor watch',
+        'cartier watch', 'breitling', 'jaeger lecoultre', 'panerai',
+        // audio — brand level
+        'devialet', 'mcintosh audio', 'mark levinson',
+        'bowers wilkins', 'kef speakers', 'focal speakers',
+        'bang olufsen', 'naim audio',
+        // eyewear — brand level
+        'cartier glasses', 'cartier sunglasses', 'chrome hearts glasses',
+        'jacques marie mage', 'chanel sunglasses',
+        // bags — brand level
+        'hermes bag', 'hermes', 'chanel bag', 'louis vuitton',
+        'goyard', 'bottega veneta', 'the row bag',
+        // cameras
+        'leica camera', 'leica lens', 'hasselblad',
+        // designer
+        'loro piana', 'moncler', 'stone island', 'rick owens',
+      ];
 
-      // run hunt + score concurrently: score starts as soon as first listings land
+      // verify session before wasting time
+      const s = summarize();
+      if (!s || !s.key_session_cookies.includes('xs')) {
+        console.log(red('not logged in. run arb sync-session first.'));
+        break;
+      }
+
+      // kill any existing server, start fresh dashboard immediately
+      try { execSync('lsof -ti:8788 | xargs kill -9 2>/dev/null'); } catch {}
+      await new Promise((r) => setTimeout(r, 500));
+      const url = startServer();
+      // wait until there's real data before opening the dashboard
+      (async () => {
+        while (true) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const brands = db.prepare(
+            `SELECT COUNT(DISTINCT brand) as n FROM listings WHERE score >= 6 AND brand IS NOT NULL`
+          ).get() as any;
+          if (brands.n >= 2) {
+            try { execSync(`open ${url}`); } catch {}
+            break;
+          }
+        }
+      })();
+
+      // hunt + score concurrently, browser VISIBLE, dashboard updates in real time
       let huntDone = false;
       const huntPromise = (async () => {
         console.log(rule(`hunt ${gold(String(queries.length))} queries`, cyan));
-        if (queries.length > 1) {
-          await huntParallel(queries, { scrolls, headless: !show });
-        } else {
-          await searchListings(queries[0], { scrolls, headless: !show });
-        }
+        await huntParallel(queries, { scrolls, headless: false });
         huntDone = true;
         log('hunt complete');
       })();
 
       const scorePromise = (async () => {
-        // wait a few seconds for first listings to land, then score continuously
         await new Promise((r) => setTimeout(r, 8000));
         while (!huntDone || (db.prepare('SELECT COUNT(*) c FROM listings WHERE score IS NULL').get() as any).c > 0) {
           await scoreUnscored({ limit: 20 });
@@ -312,13 +273,9 @@ async function main() {
       })();
 
       await Promise.all([huntPromise, scorePromise]);
-
-      const candidates = topCandidates({ minScore: min, limit: 30 });
-      console.log(rule(`candidates  (score ≥ ${min})`, cyan));
-      printCandidateList(candidates, min);
-      log(`dashboard still live at ${cyan(url)} — ctrl+c to stop`);
-      // keep server alive until user kills the process
+      log(`done — ${gold(String(topCandidates({ minScore: min, limit: 9999, includeMessaged: true }).length))} candidates at ${cyan(url)}`);
       await new Promise(() => {});
+      break;
     }
 
     default:

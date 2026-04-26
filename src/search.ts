@@ -1,6 +1,6 @@
 import { withBrowser, jitter, log } from './lib';
 import { upsertListing } from './db';
-import { gold, dim, cyan, green } from './ui';
+import { gold, dim, cyan, green, red } from './ui';
 import type { Page } from 'playwright';
 
 export type ScrapedListing = {
@@ -111,7 +111,7 @@ export async function huntParallel(
 ): Promise<ScrapedListing[]> {
   const location = opts.location ?? process.env.ARB_LOCATION ?? 'sf';
   const scrolls = opts.scrolls ?? 6;
-  const poolSize = Math.min(opts.concurrency ?? 20, queries.length);
+  const poolSize = Math.min(opts.concurrency ?? (opts.headless === false ? 5 : 20), queries.length);
 
   return withBrowser(
     async (ctx, _firstPage) => {

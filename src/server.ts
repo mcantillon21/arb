@@ -1,12 +1,18 @@
-import { db, getListing, topCandidates } from './db';
+import { db, getListing, topCandidates, getConversation } from './db';
 import { draftOutreach } from './llm';
 import { reachOut } from './outreach';
 import { searchListings } from './search';
 import { scoreUnscored } from './score';
+import { generateHTML } from './report';
+import { enrichProducts } from './enrich';
+import { startMonitor, stopMonitor } from './monitor';
 import { log } from './lib';
 import { cyan, green, red, dim } from './ui';
 
 let server: ReturnType<typeof Bun.serve> | null = null;
+let cachedHtml: string | null = null;
+let lastGenerated = 0;
+
 const activeJobs = new Map<string, { status: string; offer_cents: number | null; message: string | null; error: string | null }>();
 
 function getDeployStatus(id: string) {
@@ -67,7 +73,17 @@ async function runSearch(query: string) {
   }
 }
 
-export function startServer(html: string, port = 8788): string {
+async function getFreshHtml(): Promise<string> {
+  const now = Date.now();
+  if (cachedHtml && now - lastGenerated < 5000) return cachedHtml;
+  const candidates = topCandidates({ minScore: 6, limit: 500, includeMessaged: true });
+  const brands = await enrichProducts(candidates).catch(() => new Map());
+  cachedHtml = generateHTML(candidates, brands);
+  lastGenerated = now;
+  return cachedHtml;
+}
+
+export function startServer(port = 8788): string {
   const url = `http://localhost:${port}`;
   server = Bun.serve({
     port,
@@ -75,6 +91,7 @@ export function startServer(html: string, port = 8788): string {
       const u = new URL(req.url);
 
       if (u.pathname === '/' || u.pathname === '/index.html') {
+        const html = await getFreshHtml();
         return new Response(html, { headers: { 'Content-Type': 'text/html' } });
       }
 
@@ -104,6 +121,11 @@ export function startServer(html: string, port = 8788): string {
         return Response.json({ ok: true, id });
       }
 
+      if (u.pathname.startsWith('/api/conversation/')) {
+        const id = u.pathname.slice('/api/conversation/'.length);
+        return Response.json(getConversation(id));
+      }
+
       if (u.pathname === '/api/search' && req.method === 'POST') {
         const body = await req.json().catch(() => null);
         const query = body?.query?.trim();
@@ -122,10 +144,12 @@ export function startServer(html: string, port = 8788): string {
     },
   });
   log(`server at ${cyan(url)}`);
+  startMonitor(30000);
   return url;
 }
 
 export function stopServer() {
+  stopMonitor();
   server?.stop();
   server = null;
 }
