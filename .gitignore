@@ -1,0 +1,9 @@
+node_modules/
+.chrome-profile/
+state.db
+state.db-*
+.env
+*.log
+.fb-cookies.json
+.last-top.json
+.product-images.json

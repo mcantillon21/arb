@@ -1,0 +1,15 @@
+{
+  "name": "marketplace-arb",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "arb": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "playwright": "^1.50.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}

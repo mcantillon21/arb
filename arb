@@ -1,0 +1,7 @@
+#!/bin/bash
+# arb — facebook marketplace arbitrage agent
+# load ~/.env so ANTHROPIC_API_KEY is available regardless of cwd
+set -a
+[ -f "$HOME/.env" ] && . "$HOME/.env"
+set +a
+exec bun run /Users/molly/arb/src/cli.ts "$@"
